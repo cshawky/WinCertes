@@ -1,8 +1,32 @@
 # WinCertes - ACME Client for Windows
 
-WinCertes is a simple ACMEv2 Client for Windows, able to manage the automatic issuance and renewal of SSL Certificates, for IIS or other web servers. It is based on [Certes](https://github.com/fszlin/certes) Library. Pre-compiled binaries are available from GitHub (just look for the standard GitHub menu entry).
+WinCertes is a simple ACMEv2 Client for Windows, able to manage the automatic issuance and renewal of SSL Certificates, for IIS or other web servers. It is based on [Certes](https://github.com/fszlin/certes) Library and [Certes](https://github.com/aloopkin/WinCertes). Pre-compiled binaries are available from GitHub (just look for the standard GitHub menu entry).
 
 ![GPLv3 License](https://www.gnu.org/graphics/gplv3-88x31.png)
+
+- cshawky\WinCertes updates:
+    - All registry details now stored under a subkey
+    - Support for information in the root key (but prefer user moves the values into the named subkey)
+    - Support for "extra" subkey
+    - Legacy support of aloopkin\WinCertes registry setup has had limited testing.
+    - Huge changes to the options and registry interface (to support unlimited certificates and legacy support).
+    - Registry create rewritten and tested as creation of HKLM\Software\WinCertes kept failing on Win10 and Win2016 with UAC, Antivirus, Malware Bytes and Acronis Active Protection all enabled.
+    - More diagnostic debugging added, but could not get NLog loglevel change to take effect so added command line check before initialising logs. New parameter --debug to increase debug without recompilation.
+    - Lots of testing of --certname -d -x -a --reset --show --creatednskeys -l -e -f
+    - Added built in support to create PEM type certificates --exportpem
+        - Private Key PEM
+        - Full Certificate PEM with private key (e.g. VisualSVN Server)
+        - Separate Certificate PEM without private key (e.g. hMailServer)
+        - PFX for IIS unchanged, still need IIS certificate to revoke it (why have not researched)
+    - Added support for password entry
+    - Added attempt for Elevation if not run as administrator or UAC active
+    - All certificate files stored in a folder = Environment.CurrentDirectory + "\\Certificates"
+    - Assumes WinCertes.exe is installed to C:\Program Files\WinCertes or CWD.
+    - Certificate path is stored in registry but not yet read at startup. Once supported this would allow each set of certificates to be written to a different folder. The folder should have restricted access due to the potential existence of the private RSA key text file.
+    - Tested on Windows 10, Windows 2016
+    - TODO Ensure this readme matches the new code
+    - TODO Get github community to confirm IIS, DNS registration features work
+    - TODO .\Samples\ scripts were drafted late, not tested before all of the changes above. Update and simplify scripts. Add scheduled task script to the mix that includes example for start/stop of IIS, Firewall rules, hMailServer and VisualSVN.
 
 Requirements:
 - Windows Server 2008 R2 SP1 or higher (.Net 4.6.1 or higher), 64-bit
@@ -29,7 +53,7 @@ Features:
 
 [\*] Warning: Let's Encrypt does not allow wildcard certificates issuance with HTTP validation. So, the DNS validation mode MUST be used to retrieve wildcard certificate.
 
-This OpenSource software is brought to you by [EverTrust](https://github.com/EverTrust), which provides support plans for it as part of EverTrust Horizon software suite.
+[EverTrust](https://github.com/EverTrust)
 
 ----------
 Quick Start (IIS users)
@@ -85,12 +109,44 @@ WinCertes.exe:
       --no-csp               does not import the certificate into CSP. Use with
                                caution, at your own risks
 
-Typical usage: WinCertes.exe -a -e me@example.com -d test1.example.com -d test2.example.com -p
-This will automatically create and register account with email me@example.com, and
-request the certificate for test1.example.com and test2.example.com, then import it into
-Windows Certificate store (machine context), and finally set a Scheduled Task to manage renewal.
+cshawky/wincertes:
+  -n, --certname=VALUE       Unique Certificate name, also used as cert file name (exclude extension)
+                               e.g. "wincertes.com" (default name=first domain name)
+      --dnscreatekeys        Create all DNS values in the registry and exit. helper for registry:
+                               Use with --certname. Manually edit registry or include parameters below on the command line
+      --dnstype=VALUE        DNS Validator type: acme-dns, win-dns
+      --dnsurl=VALUE         DNS Server URL: http://blah.net
+      --dnshost=VALUE        DNS Server Host
+      --dnsuser=VALUE        DNS Server Username
+      --dnspassword=VALUE    DNS Server Password
+      --dnskey=VALUE         DNS Server Account Key
+      --dnssubdomain=VALUE   DNS Server SubDomain
+      --dnszone=VALUE        DNS Server Zone
+      --debug                Enable extra debug logging
+      --extra[=VALUE]        Please use -n instead for support of future file instead of registry
+      --password=VALUE       Certificate password min 16 characters (default=random)
+      --reset                Reset all configuration parameters for --certname and exit
 
-"WinCertes.exe -d test1.example.com -d test2.example.com -r" will revoke that certificate.
+Typical usage:
+
+  "WinCertes.exe -a -e me@example.com -d test1.example.com -d test2.example.com -p"
+
+This will automatically create and register account with email me@example.com, and
+request the certificate for (test1.example.com, test2.example.com), then import it
+into Windows Certificate store, create a Scheduled Task to manage renewal, then save
+settings to registry [HKLM\SOFTWARE\WinCertes\test1.example.com]. Once the settings
+are saved to registry WinCertes.exe may be run with -n test1.example.com to re-use
+the same settings. e.g.
+
+  "WinCertes.exe -n test1.example.com" will renew that certificate.
+  "WinCertes.exe -n test1.example.com -r" will revoke that certificate.
+
+Be sure to revoke a certificate before deleting registry keys via --reset
+
+  "WinCertes.exe -n test1.example.com --reset" will revoke that certificate.
+
+For debugging use: -s https://acme-staging-v02.api.letsencrypt.org/directory
+
 ```
 
 Using Non-Let's Encrypt CA
@@ -117,11 +173,7 @@ Param(
                 [Parameter(Mandatory=$True,Position=1)]
                 [string]$pfx,
                 [Parameter(Mandatory=$True)]
-                [string]$pfxPassword,
-                [Parameter(Mandatory=$True)]
-                [string]$cer,
-                [Parameter(Mandatory=$True)]
-                [string]$key
+                [string]$pfxPassword
                 )
 
 # Build the pfx object using file path and password
@@ -130,10 +182,6 @@ $mypfx = Get-PfxData -FilePath $pfx -Password $mypwd
 
 # Start the real work. Here we simply append the certificate DN to a text file
 $mypfx.EndEntityCertificates.Subject | Out-File -FilePath c:\temp\test.txt -Append
-
-# Copy certificate: here's an example for Apache
-Copy-Item -Path $cer -Destination C:\\Program\ Files\\Apache\ Group\\Apache2\\conf\\server.crt
-Copy-Item -Path $key -Destination C:\\Program\ Files\\Apache\ Group\\Apache2\\conf\\server.key
 ```
 
 About IIS Configuration

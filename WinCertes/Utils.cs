@@ -9,6 +9,7 @@ using Org.BouncyCastle.OpenSsl;
 using Org.BouncyCastle.Security;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Management.Automation.Runspaces;
@@ -19,7 +20,6 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using TS = Microsoft.Win32.TaskScheduler;
-
 
 namespace WinCertes
 {
@@ -204,6 +204,31 @@ namespace WinCertes
         }
 
         /// <summary>
+        /// Attempt elevation if not running as administrator
+        /// </summary>
+        public static void AdminRelauncher()
+        {
+            if (!IsAdministrator())
+            {
+                ProcessStartInfo proc = new ProcessStartInfo();
+                proc.UseShellExecute = true;
+                proc.WorkingDirectory = Environment.CurrentDirectory;
+                proc.FileName = Assembly.GetEntryAssembly().CodeBase;
+
+                proc.Verb = "runas";
+
+                try
+                {
+                    Process.Start(proc);
+                }
+                catch (Exception ex)
+                {
+                    Program._logger.Info("This program must be run as an administrator! \n\n" + ex.ToString());
+                }
+                System.Environment.Exit(-1);
+            }
+        }
+        /// <summary>
         /// Configures the console logger
         /// </summary>
         /// <param name="logPath">the path to the directory where to store the log files</param>
@@ -278,7 +303,7 @@ namespace WinCertes
                 {
                     foreach (TS.Task t in ts.RootFolder.Tasks)
                     {
-                        if (t.Name.StartsWith("WinCertes"))
+                        if (t.Name.StartsWith("WinCertes", StringComparison.InvariantCultureIgnoreCase))
                             return true;
                     }
                 }
@@ -299,7 +324,7 @@ namespace WinCertes
                 {
                     foreach (TS.Task t in ts.RootFolder.Tasks)
                     {
-                        if (t.Name.StartsWith("WinCertes"))
+                        if (t.Name.StartsWith("WinCertes", StringComparison.InvariantCultureIgnoreCase))
                             ts.RootFolder.DeleteTask(t.Name, false);
                     }
                 }
